@@ -1,49 +1,50 @@
 class Nself < Formula
-  desc "Self-hosted infrastructure manager for developers"
+  desc "Production-ready self-hosted backend infrastructure"
   homepage "https://nself.org"
-  url "https://github.com/acamarata/nself/archive/refs/tags/v0.4.6.tar.gz"
-  sha256 "1cc117486d5de1b8d4a8f33c5acbe250d662ebabb1fda8377c77091a1fd7879e"
-  license "MIT"
-  head "https://github.com/acamarata/nself.git", branch: "main"
+  url "https://github.com/acamarata/nself/archive/refs/tags/v0.4.8.tar.gz"
+  sha256 "14dc72326344f750b45bbe28d6bb2b32559a8713eeb941faa0fe33c1c682593b"
+  license "Source-Available"
+  version "0.4.8"
 
   depends_on "docker"
-  depends_on "bash" if OS.linux?
+  depends_on "docker-compose"
 
   def install
-    # Install all files to libexec
-    libexec.install Dir["*"]
+    # Install all source files to libexec
+    libexec.install "src"
     
-    # Create wrapper script
+    # Install templates
+    libexec.install "templates" if File.exist?("templates")
+    
+    # Create the main executable wrapper
     (bin/"nself").write <<~EOS
-      #!/bin/bash
-      export NSELF_HOME="#{libexec}"
-      export PATH="#{libexec}/bin:$PATH"
-      exec "#{libexec}/bin/nself" "$@"
+      #!/usr/bin/env bash
+      exec "#{libexec}/src/cli/nself.sh" "$@"
     EOS
     
-    chmod 0755, bin/"nself"
+    # Make it executable
+    (bin/"nself").chmod 0755
     
-    # Install completions
-    bash_completion.install "#{libexec}/completions/nself.bash" if File.exist?("#{libexec}/completions/nself.bash")
-    zsh_completion.install "#{libexec}/completions/_nself" if File.exist?("#{libexec}/completions/_nself")
+    # Install documentation
+    doc.install "README.md", "LICENSE" if File.exist?("README.md")
+    doc.install "docs" if File.exist?("docs")
   end
 
-  def caveats
-    <<~EOS
-      nself has been installed!
-      
-      To get started:
-        mkdir my-project && cd my-project
-        nself init
-        nself build
-        nself start
-      
-      Documentation: https://github.com/acamarata/nself
-    EOS
+  def post_install
+    # Create .nself directory structure
+    nself_dir = File.expand_path("~/.nself")
+    FileUtils.mkdir_p(nself_dir)
+    
+    # Copy source and templates to ~/.nself
+    FileUtils.cp_r("#{libexec}/src", nself_dir)
+    FileUtils.cp_r("#{libexec}/templates", nself_dir) if File.exist?("#{libexec}/templates")
+    
+    ohai "nself has been installed successfully!"
+    ohai "Run 'nself init' to get started with your first project"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/nself version")
-    assert_match "init", shell_output("#{bin}/nself help")
+    system "#{bin}/nself", "version"
+    system "#{bin}/nself", "help"
   end
 end
