@@ -26,7 +26,14 @@ jobs:
       matrix:
         # ubuntu-latest excluded: formula is macOS-only (on_macos blocks, no Linux URL).
         # Homebrew throws "formula requires at least a URL" on Linux.
-        os: [macos-14, macos-13]
+        #
+        # macos-13 was retired by GitHub and no longer schedules: its job sat
+        # queued indefinitely (never allocated a runner) while macos-14 in the
+        # same matrix finished in ~30s, and it had not completed once since
+        # 2026-07. As a required check that made every PR unmergeable. Replaced
+        # with macos-latest (currently macos-26-arm64), keeping the old/new pair
+        # the matrix is for.
+        os: [macos-14, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
