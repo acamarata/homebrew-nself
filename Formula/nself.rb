@@ -5,7 +5,7 @@
 class Nself < Formula
   desc "Self-hosted backend CLI: Postgres, GraphQL, Auth, Nginx in minutes"
   homepage "https://nself.org"
-  version "1.2.5"
+  version "1.2.6"
   license "MIT"
 
   depends_on "docker"
@@ -14,12 +14,12 @@ class Nself < Formula
   on_macos do
     on_arm do
       url "https://github.com/nself-org/cli/releases/download/v#{version}/nself-#{version}-darwin-arm64.tar.gz"
-      sha256 "85b97434f6b53ed4d8782731599649487cc0609e422440fd3dc0d56d73209682"
+      sha256 "6d34c2e9a501906ae0048ee1c88df90627c6cf2321cddc3ee2a2572c06d90209"
     end
 
     on_intel do
       url "https://github.com/nself-org/cli/releases/download/v#{version}/nself-#{version}-darwin-amd64.tar.gz"
-      sha256 "9a6d4c592786ebc08d83970b2f1a0fa330cdf29b444451f89ca18a6ef759ac3e"
+      sha256 "776c0b8671a4cc254f86abc2fe27bf4c3ac50b1baa8e5fbb610a06df30172457"
     end
   end
 
