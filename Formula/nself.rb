@@ -14,12 +14,12 @@ class Nself < Formula
   on_macos do
     on_arm do
       url "https://github.com/nself-org/cli/releases/download/v#{version}/nself-#{version}-darwin-arm64.tar.gz"
-      sha256 "96bde0da0f8f95732f365be63d1cff3cb8c18df3f6e6db554d060c013547e053"
+      sha256 "94cc5b760a40afaf0e2194a3bcc810d1b4e6a0e7c210e3c2b3e328a6c26488dd"
     end
 
     on_intel do
       url "https://github.com/nself-org/cli/releases/download/v#{version}/nself-#{version}-darwin-amd64.tar.gz"
-      sha256 "b3ae5bfd3f58259b9840370758a6465ea7dcc39bba25dcdfcc47d2972fbd0155"
+      sha256 "d177cfb50b4cf24e9a34556acad407638dfa42bd96d60290344c9cb704026c1a"
     end
   end
 
