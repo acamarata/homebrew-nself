@@ -12,10 +12,12 @@ on:
     branches: [main]
     paths:
       - 'Formula/nself.rb'
+      - '.github/workflows/test.yml'
   pull_request:
     branches: [main]
     paths:
       - 'Formula/nself.rb'
+      - '.github/workflows/test.yml'
   workflow_dispatch:  # allow manual re-runs on demand
 
 jobs:
