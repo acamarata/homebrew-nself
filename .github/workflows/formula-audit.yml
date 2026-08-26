@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+  # A formula change arrives as a pull request, so guarding only pushes to main
+  # means the sha256 check runs after the mistake has already landed. That is
+  # how a formula naming 1.3.1 with 1.2.7's hashes reached main twice.
+  pull_request:
+    paths:
+      - 'Formula/**'
+      - '.github/workflows/formula-audit.yml'
   release:
     types:
       - published
