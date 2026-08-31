@@ -78,3 +78,7 @@ PLAN.md
 .gemini/
 .codeium/
 .claude/
+backend/docker-compose.yml
+backend/docker-compose.override.yml
+*.generated.env
+**/*.gen.yml
