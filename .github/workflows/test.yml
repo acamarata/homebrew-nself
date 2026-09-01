@@ -20,6 +20,10 @@ on:
       - '.github/workflows/test.yml'
   workflow_dispatch:  # allow manual re-runs on demand
 
+concurrency:
+  group: install-smoke-test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   install-smoke:
     name: brew install smoke (${{ matrix.os }})
