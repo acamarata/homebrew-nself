@@ -1,0 +1,307 @@
+name: Hygiene
+
+# Consolidates the trivial, no-toolchain repo gates into one workflow with a
+# single checkout, so a push doesn't queue five separate near-instant jobs
+# for five separate runners. None of these is a required branch-protection
+# check for homebrew-nself (only "Test nself Homebrew Formula" and "audit"
+# are — see test-formula.yml / formula-audit.yml, both untouched).
+#
+# Trigger scope is the union of the five originals — clean-root ran on
+# push[main] + pull_request (any branch); clean-working-tree and
+# generated-file-gate on push/pull_request[main]; multi-arch-check also
+# allowed workflow_dispatch; doc-sync ran on pull_request
+# [opened, synchronize, reopened] with no branch restriction, which is the
+# bare `pull_request:` default. Union is broader, never narrower — nothing
+# that used to run stops running. The doc-sync step is guarded to PR events
+# only (its script reads github.base_ref, which push events don't set).
+#
+# nself-first-check.yml is deliberately NOT folded in here — it's already
+# scoped to `paths: ['**/docker-compose*.yml', ...]` and fires on almost no
+# pushes. Merging it into a workflow that must run on every push would make
+# it run far more often, which is the opposite of the goal.
+#
+# NOTE (discovery, not fixed here — out of scope for a CI-timing task):
+# clean-root.yml and clean-working-tree.yml overlapped almost entirely
+# (root-markdown / .DS_Store / secret-env / .gitignore checks, written
+# twice with slightly different implementations). Both step sets are kept
+# below rather than de-duplicated, so no existing check's behavior changes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # ── from clean-root.yml ──────────────────────────────────────
+      - name: Forbid markdown at repo root other than README.md
+        run: |
+          OFFENDERS=$(find . -maxdepth 1 -name '*.md' ! -name 'README.md' -type f | sort)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::Disallowed markdown files at repo root:"
+            echo "$OFFENDERS"
+            echo ""
+            echo "Per the nSelf Sub-Repo Root Hygiene rule:"
+            echo "  - CONTRIBUTING.md  -> .github/wiki/Contributing.md  (or .github/docs/contributing.md)"
+            echo "  - CODE_OF_CONDUCT.md -> .github/wiki/Code-of-Conduct.md"
+            echo "  - CHANGELOG.md     -> .github/wiki/Changelog.md"
+            echo "  - SECURITY.md      -> .github/SECURITY.md"
+            echo "  - other .md        -> .github/wiki/ (or .github/docs/ for private repos)"
+            echo ""
+            echo "Spec: ~/.claude/CLAUDE.md (Clean Repo Root - Hard Rule)"
+            echo "      ~/Sites/nself/.claude/CLAUDE.md (Sub-Repo Root Hygiene - Hard Rule)"
+            exit 1
+          fi
+          echo "Repo root markdown is clean (only README.md present)."
+
+      - name: Forbid tracked .DS_Store / OS junk anywhere in tree
+        run: |
+          OFFENDERS=$(git ls-files | grep -E '(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini)$|\.swp$|\.swo$' || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::Tracked OS / editor junk in repository:"
+            echo "$OFFENDERS"
+            echo ""
+            echo "Run: git rm --cached <file> for each, then commit. Add to .gitignore."
+            echo "Spec: ~/.claude/CLAUDE.md (Clean Working Tree - Hard Rule)"
+            exit 1
+          fi
+          echo "No tracked OS junk."
+
+      - name: Forbid tracked secret-bearing .env files
+        run: |
+          # Per nSelf env cascade convention (PPI):
+          #   ALLOWED tracked: .env.dev, .env.staging, .env.prod, .env.production,
+          #                    .env.example, .env.template, .env.sample,
+          #                    (.environments|environments)/<env>/.env  (web-specific variant)
+          #   FORBIDDEN tracked: .env (bare, anywhere not under .environments/<env>/),
+          #                      .env.local, .env.secrets, .env.computed
+          OFFENDERS=$(git ls-files \
+            | grep -E '(^|/)(\.env|\.env\.local|\.env\.secrets|\.env\.computed)$' \
+            | grep -vE '(^|/)(\.environments|environments)/[^/]+/\.env$' \
+            || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::Tracked SECRET-BEARING .env file(s) found:"
+            echo "$OFFENDERS"
+            echo ""
+            echo "Per the nSelf env cascade convention, .env / .env.local / .env.secrets / .env.computed"
+            echo "must NEVER be tracked. They contain local overrides or production secrets."
+            echo "(Exception: .environments/<env>/.env is allowed — web-specific config-folder pattern.)"
+            echo ""
+            echo "If credentials are in any tracked file: ROTATE THEM and scrub git history."
+            echo "Spec: ~/.claude/CLAUDE.md (Clean Working Tree) + ~/Sites/nself/.claude/CLAUDE.md (Env cascade)"
+            exit 1
+          fi
+          echo "No tracked secret-bearing .env files."
+
+      - name: Verify .gitignore baseline patterns present
+        run: |
+          REQUIRED=(.DS_Store .env node_modules)
+          MISSING=()
+          for pattern in "${REQUIRED[@]}"; do
+            if ! grep -qE "(^|/)${pattern//./\\.}(\$|/)" .gitignore 2>/dev/null && ! grep -qE "^${pattern//./\\.}\$" .gitignore 2>/dev/null; then
+              MISSING+=("$pattern")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::warning::.gitignore missing baseline patterns: ${MISSING[*]}"
+            echo "See ~/.claude/CLAUDE.md (Clean Working Tree - Hard Rule) for full baseline."
+          fi
+
+      # ── from clean-working-tree.yml (kept as-is — see NOTE above) ──
+      - name: Check for tracked .DS_Store files (legacy check)
+        run: |
+          if git ls-files | grep -q '\.DS_Store'; then
+            echo "ERROR: .DS_Store files are tracked in git. Run: git rm --cached \$(git ls-files | grep '.DS_Store')"
+            exit 1
+          fi
+
+      - name: Check for tracked .env secrets (legacy check)
+        run: |
+          FORBIDDEN=$(git ls-files | grep -E '^\.env$|\.env\.local$|\.env\.secrets$' || true)
+          if [ -n "$FORBIDDEN" ]; then
+            echo "ERROR: Forbidden env files tracked: $FORBIDDEN"
+            exit 1
+          fi
+
+      - name: Check .gitignore has baseline patterns (legacy check)
+        run: |
+          if [ ! -f .gitignore ]; then
+            echo "ERROR: .gitignore is missing"
+            exit 1
+          fi
+          MISSING=""
+          grep -q '\.DS_Store' .gitignore || MISSING="$MISSING .DS_Store"
+          grep -q 'node_modules' .gitignore || grep -q 'vendor' .gitignore || true
+          if [ -n "$MISSING" ]; then
+            echo "WARNING: .gitignore may be missing patterns:$MISSING"
+          fi
+
+      - name: Check for root-level forbidden files (legacy check)
+        run: |
+          FORBIDDEN=$(find . -maxdepth 1 -name "*.md" ! -name "README.md" -o -maxdepth 1 -name "CHANGELOG.md" -o -maxdepth 1 -name "CONTRIBUTING.md" -o -maxdepth 1 -name "CODE_OF_CONDUCT.md" -o -maxdepth 1 -name "SECURITY.md" 2>/dev/null | grep -v '^\./$' || true)
+          if [ -n "$FORBIDDEN" ]; then
+            echo "ERROR: Forbidden root-level .md files: $FORBIDDEN"
+            echo "Move to .github/wiki/ (public) or .github/docs/ (private)"
+            exit 1
+          fi
+
+      # ── from generated-file-gate.yml ─────────────────────────────
+      - name: Scan diff for GENERATED BY markers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main --depth=1
+            BASE="origin/main"
+          else
+            BASE="${{ github.event.before }}"
+            if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+              BASE="HEAD~1"
+            fi
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE"...HEAD || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No changed files to scan."
+            exit 0
+          fi
+
+          FAIL=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            if head -n 5 "$f" | grep -q "# GENERATED BY"; then
+              if git check-ignore -q "$f"; then
+                echo "OK: $f is generated but gitignored."
+              else
+                echo "ERROR: Refusing to commit generated file. Add to .gitignore first."
+                echo "  -> $f"
+                FAIL=1
+              fi
+            fi
+          done <<< "$CHANGED"
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "ERROR: Refusing to commit generated file. Add to .gitignore first."
+            exit 1
+          fi
+
+          echo "Generated File Gate: clean."
+
+      # ── from multi-arch-check.yml ────────────────────────────────
+      - name: Multi-arch check (N/A)
+        run: |
+          echo "Repo type: Homebrew tap — Ruby formula, no build artifacts (nself-org/homebrew-nself)"
+          echo "No Go binaries or Docker images produced. Multi-arch check N/A. PASS."
+
+      # ── from doc-sync.yml — PR-only, needs github.base_ref ───────
+      - name: Compute PR diff
+        id: diff
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD || true)
+          echo "changed<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$changed" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "$changed"
+
+      - name: Doc-Sync matrix check
+        if: github.event_name == 'pull_request'
+        env:
+          CHANGED: ${{ steps.diff.outputs.changed }}
+        run: |
+          set -u
+          missing=0
+          rows=""
+
+          matches() {
+            echo "$CHANGED" | grep -qE "$1"
+          }
+
+          # Commands / flags
+          if matches '^cli/(cmd|internal/commands)/'; then
+            if ! matches '^(cli/\.wiki/commands/|\.claude/docs/sport/F02-COMMAND-INVENTORY\.md|\.claude/docs/reference/cli-commands\.md|web/docs/content/cli/)'; then
+              rows="${rows}- commands/flags changed without cli/.wiki/commands/ or F02-COMMAND-INVENTORY.md update\n"
+              missing=1
+            fi
+          fi
+
+          # Env vars
+          if matches '(^|/)\.env\.example$|^cli/internal/env/'; then
+            if ! matches '(\.claude/docs/sport/F09-ENV-VAR-INVENTORY\.md|cli/\.wiki/reference/env-vars\.md|web/docs/content/reference/env-vars)'; then
+              rows="${rows}- env vars changed without F09-ENV-VAR-INVENTORY.md or env-vars reference update\n"
+              missing=1
+            fi
+          fi
+
+          # API endpoints
+          if matches '^web/backend/services/|^web/backend/.*/metadata/'; then
+            if ! matches '(web/docs/content/api/|\.claude/docs/API-Reference\.md|\.claude/docs/sport/F08-SERVICE-INVENTORY\.md)'; then
+              rows="${rows}- API endpoints changed without web/docs/content/api/ or F08-SERVICE-INVENTORY.md update\n"
+              missing=1
+            fi
+          fi
+
+          # UI pages
+          if matches '^(admin/app/|web/[^/]+/src/app/)'; then
+            if ! matches '(admin/\.wiki/|web/docs/content/|\.github/docs/|\.github/wiki/)'; then
+              rows="${rows}- UI pages changed without matching .wiki/ or web/docs/content/ update\n"
+              missing=1
+            fi
+          fi
+
+          # Pricing / tiers
+          if matches '^(web/org/content/(pricing|membership)/|web/org/src/.*(pricing|tier)|plugins-pro/.*/tier)'; then
+            if ! matches '(\.claude/docs/sport/F07-PRICING-TIERS\.md|\.claude/docs/membership/|web/org/content/(pricing|membership)/)'; then
+              rows="${rows}- pricing/tiers changed without F07-PRICING-TIERS.md or membership docs update\n"
+              missing=1
+            fi
+          fi
+
+          # Plugins / bundles
+          if matches '^(plugins|plugins-pro)/[^/]+/'; then
+            if ! matches '(\.claude/docs/sport/F0[346]-|plugins/README\.md|plugins-pro/README\.md|web/org/content/plugins/|web/docs/content/plugins/)'; then
+              rows="${rows}- plugins/bundles changed without F03/F04/F06 or README or web/*/content/plugins/ update\n"
+              missing=1
+            fi
+          fi
+
+          # Ports / subdomains
+          if matches '^(nginx/|.*docker-compose\.ya?ml$)'; then
+            if ! matches '(\.claude/docs/sport/F10-PORT-REGISTRY\.md|\.claude/docs/sport/F11-SUBDOMAIN-MAP\.md|\.claude/CLAUDE\.md)'; then
+              rows="${rows}- ports/subdomains changed without F10-PORT-REGISTRY.md or F11-SUBDOMAIN-MAP.md update\n"
+              missing=1
+            fi
+          fi
+
+          # Versions
+          if matches '(^cli/VERSION$|pubspec\.yaml$|homebrew-nself/.*\.rb$|plugins-pro/VERSION$|^Cargo\.toml$)'; then
+            if ! matches '(\.claude/docs/MASTER-VERSIONS\.md|\.claude/docs/sport/F01-MASTER-VERSIONS\.md|web/org/content/changelog|homebrew-nself/Formula/)'; then
+              rows="${rows}- version files changed without MASTER-VERSIONS.md or F01 update\n"
+              missing=1
+            fi
+          fi
+
+          if [ "$missing" -eq 1 ]; then
+            echo "::error::Doc-Sync Ritual violations detected"
+            printf '%b' "$rows"
+            echo ""
+            echo "Doctrine: .claude/docs/doctrines/doc-sync-ritual.md"
+            echo "Matrix:   .claude/qa/pre-commit.md"
+            exit 1
+          fi
+
+          echo "Doc-Sync Ritual: all surface changes have matching doc updates."

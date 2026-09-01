@@ -15,6 +15,10 @@ on:
     types:
       - published
 
+concurrency:
+  group: formula-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   audit:
     runs-on: macos-latest

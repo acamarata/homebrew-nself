@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: test-formula-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test nself Homebrew Formula
